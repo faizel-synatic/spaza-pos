@@ -1,0 +1,20 @@
+{
+  "name": "spazaai-v1",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@hono/node-server": "^1.19.14",
+    "@supabase/supabase-js": "^2.103.3",
+    "dotenv": "^17.4.2",
+    "groq-sdk": "^1.1.2",
+    "hono": "^4.12.14"
+  }
+}
