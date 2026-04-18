@@ -10,28 +10,28 @@ const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY)
 
 app.get('/health', (c) => c.text('ok'))
 
-// Twilio sends POST to this route
 app.post('/whatsapp', async (c) => {
   try {
     const body = await c.req.parseBody()
     const from = body.From?.replace('whatsapp:', '')
     const text = body.Body?.trim()
 
-    if (!from || !text) return c.text('ok')
+    if (!from || !text) return c.body(null, 204)
 
     console.log(`[${from}] ${text}`)
 
-    // Handle /start or "hi" type greetings
-    if (['hi','hello','start','/start','hey'].includes(text.toLowerCase())) {
+    // Greeting
+    if (['hi', 'hello', 'start', '/start', 'hey'].includes(text.toLowerCase())) {
       await sendWhatsApp(from,
         'Welcome to Spaza POS!\n\n' +
         'Send your sales like this:\n' +
-        '  2 breads 28\n' +
+        '  2 breads 14\n' +
         '  milk 3x22 coke 10\n' +
         '  airtime 50\n\n' +
+        'The price is always the unit price per item.\n\n' +
         'Commands:\n*stock* — see your inventory\n*sales* — see today\'s sales'
       )
-      return c.text('ok')
+      return c.body(null, 204)
     }
 
     // Stock command
@@ -44,14 +44,14 @@ app.post('/whatsapp', async (c) => {
 
       if (error || !data || data.length === 0) {
         await sendWhatsApp(from, 'No stock recorded yet. Start logging sales!')
-        return c.text('ok')
+        return c.body(null, 204)
       }
 
       const lines = data.map(p =>
-        `${p.name}: ${p.stock} left (last price: R${p.last_price})`
+        `${p.name}: ${p.stock} left (R${p.last_price} each)`
       )
       await sendWhatsApp(from, 'Current stock:\n' + lines.join('\n'))
-      return c.text('ok')
+      return c.body(null, 204)
     }
 
     // Sales command
@@ -68,7 +68,7 @@ app.post('/whatsapp', async (c) => {
 
       if (error || !data || data.length === 0) {
         await sendWhatsApp(from, 'No sales recorded today yet.')
-        return c.text('ok')
+        return c.body(null, 204)
       }
 
       const totalRevenue = data.reduce((sum, s) => sum + (s.total || 0), 0)
@@ -78,9 +78,9 @@ app.post('/whatsapp', async (c) => {
       await sendWhatsApp(from,
         `Today's sales (${data.length} transactions):\n` +
         lines.join('\n') +
-        `\n\nTotal: R${totalRevenue.toFixed(2)}`
+        `\n\nTotal revenue: R${totalRevenue.toFixed(2)}`
       )
-      return c.text('ok')
+      return c.body(null, 204)
     }
 
     // Parse as sale
@@ -89,23 +89,29 @@ app.post('/whatsapp', async (c) => {
     if (parsed.fail || !parsed.items || parsed.items.length === 0) {
       await sendWhatsApp(from,
         "I couldn't understand that.\n\n" +
-        'Try: "2 breads 28" or "milk 22 coke 10"\n\n' +
-        'Send *stock* to see inventory\nSend *sales* to see today\'s sales'
+        'Try: "2 breads 14" or "milk 22 coke 10"\n\n' +
+        'Send *stock* to see inventory\n' +
+        'Send *sales* to see today\'s sales'
       )
-      return c.text('ok')
+      return c.body(null, 204)
     }
 
     const replies = []
 
     for (const item of parsed.items) {
-      await sb.from('sales').insert({
+      const { error: saleError } = await sb.from('sales').insert({
         shop_id: from,
         product_name: item.name,
         quantity: item.qty,
-        unit_price: item.price,
-        total: item.qty * item.price,
+        unit_price: item.unit_price,
+        total: item.qty * item.unit_price,
         raw_message: text
       })
+
+      if (saleError) {
+        console.error('Sale insert error:', saleError.message)
+        continue
+      }
 
       const { data: product } = await sb
         .from('products')
@@ -116,22 +122,35 @@ app.post('/whatsapp', async (c) => {
 
       const newStock = (product?.stock ?? 0) - item.qty
 
-      await sb.from('products').upsert(
-        { shop_id: from, name: item.name, stock: newStock, last_price: item.price },
+      const { error: stockError } = await sb.from('products').upsert(
+        {
+          shop_id: from,
+          name: item.name,
+          stock: newStock,
+          last_price: item.unit_price
+        },
         { onConflict: 'shop_id,name' }
       )
 
-      replies.push(`${item.name}: ${newStock} left`)
+      if (stockError) {
+        console.error('Stock upsert error:', stockError.message)
+      }
+
+      replies.push(
+        `${item.name} x${item.qty} @ R${item.unit_price} = R${item.qty * item.unit_price} (stock: ${newStock} left)`
+      )
     }
 
-    await sendWhatsApp(from, 'Logged. ' + replies.join(', '))
+    if (replies.length > 0) {
+      await sendWhatsApp(from, 'Logged.\n' + replies.join('\n'))
+    }
 
   } catch (err) {
     console.error('Webhook error:', err)
   }
 
-  return c.text('ok')
+  return c.body(null, 204)
 })
 
 serve({ fetch: app.fetch, port: process.env.PORT || 3000 })
-console.log('Spaza AI.. running...')
+console.log('Spaza.. AI (18..) running...')
